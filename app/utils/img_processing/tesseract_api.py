@@ -1,3 +1,67 @@
+# Suporte a múltiplos motores OCR
+def ocr_with_engine(image_bytes, engine="tesseract"):
+    """
+    Função unificada para OCR usando Tesseract, EasyOCR, PaddleOCR ou TrOCR.
+    Parâmetros:
+        image_bytes: bytes da imagem
+        engine: 'tesseract', 'easyocr', 'paddleocr', 'trocr'
+    Retorna:
+        dict com pelo menos a chave 'text'
+    """
+    import io
+    from PIL import Image
+    import numpy as np
+    result = {"text": "", "engine": engine}
+    if engine == "tesseract":
+        ocr_engine = TesseractAPI(lang="storysquad")
+        low_confidence, content_flagged, text = ocr_engine.transcribe(image_bytes)
+        result.update({
+            "text": text,
+            "low_confidence": low_confidence,
+            "content_flagged": content_flagged
+        })
+        return result
+    elif engine == "easyocr":
+        try:
+            import easyocr
+        except ImportError:
+            raise RuntimeError("EasyOCR não está instalado. Instale com 'pip install easyocr'.")
+        reader = easyocr.Reader(['pt', 'en'])
+        # EasyOCR espera caminho ou numpy array
+        img = np.array(Image.open(io.BytesIO(image_bytes)))
+        out = reader.readtext(img, detail=0, paragraph=True)
+        result["text"] = "\n".join(out)
+        return result
+    elif engine == "paddleocr":
+        try:
+            from paddleocr import PaddleOCR
+        except ImportError:
+            raise RuntimeError("PaddleOCR não está instalado. Instale com 'pip install paddleocr'.")
+        ocr = PaddleOCR(use_angle_cls=True, lang='pt')
+        img = np.array(Image.open(io.BytesIO(image_bytes)).convert("RGB"))
+        out = ocr.ocr(img)
+        lines = []
+        for block in out:
+            for line in block:
+                lines.append(line[1][0])
+        result["text"] = "\n".join(lines)
+        return result
+    elif engine == "trocr":
+        try:
+            from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+            import torch
+        except ImportError:
+            raise RuntimeError("Transformers e torch não estão instalados. Instale com 'pip install transformers torch'.")
+        processor = TrOCRProcessor.from_pretrained("microsoft/trocr-base-handwritten")
+        model = VisionEncoderDecoderModel.from_pretrained("microsoft/trocr-base-handwritten")
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        pixel_values = processor(images=img, return_tensors="pt").pixel_values
+        generated_ids = model.generate(pixel_values)
+        text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        result["text"] = text
+        return result
+    else:
+        raise ValueError(f"Engine '{engine}' não suportada. Use 'tesseract', 'easyocr', 'paddleocr' ou 'trocr'.")
 # Adicionando imports necessários para ocr_image
 from PIL import Image
 import io
@@ -17,13 +81,6 @@ pytesseract.tesseract_cmd = "C:/Users/22.00774-0/AppData/Local/Programs/Tesserac
 # Get name of directory where this file is located
 DIR = dirname(__file__)
 
-# Setup globals
-BAD_WORDS_CSV = DIR + "/../moderation/bad_single.csv"
-MODEL_DIR = DIR + "/../../../models/"
-TESSDATA_DIR = MODEL_DIR
-
-# Tell tesseract to look in TESSDATA_DIR for lang trainedata files
-TESS_CONFIG = f'--tessdata-dir "{TESSDATA_DIR}"'
 
 
 class TesseractAPI:
@@ -33,6 +90,7 @@ class TesseractAPI:
     """
 
     def __init__(self, lang="storysquad"):
+    #def __init__(self, lang="por"):
         """
         Arguments:
         Tesseract model (default is 'storysquad')
@@ -79,7 +137,7 @@ class TesseractAPI:
         """
 
         data_dict = image_to_data(
-            image, lang=self.lang, config=TESS_CONFIG, output_type="dict"
+            image, lang=self.lang, config='', output_type="dict"
         )
         return data_dict
 
@@ -95,8 +153,7 @@ class TesseractAPI:
         Transcribed text (string)
         """
 
-        text = image_to_string(image, lang=self.lang, config=TESS_CONFIG)
-
+        text = image_to_string(image, lang=self.lang, config='')
         return text
 
     # Removido: moderação de conteúdo baseada em lista de palavras, pois não pode depender de recursos externos
